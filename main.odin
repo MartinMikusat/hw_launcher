@@ -61,21 +61,24 @@ main :: proc() {
 		return
 	}
 	launcher_state_init(&launcher)
-	defer launcher_state_destroy(&launcher)
 	backend_init()
-	defer backend_destroy(&launcher)
+	defer launcher_shutdown()
 
 	if !panel_init() {
 		fmt.eprintln("[hw_launcher] window or Metal initialization failed")
 		return
 	}
-	defer panel_shutdown()
 
 	if message := global_hotkey_start(); len(message) > 0 {
 		transcript_append(&launcher.transcript, .Error, message)
 		panel_show()
-	} else {
-		defer global_hotkey_stop()
 	}
 	panel_run()
+}
+
+launcher_shutdown :: proc() {
+	global_hotkey_stop()
+	backend_destroy(&launcher)
+	panel_shutdown()
+	launcher_state_destroy(&launcher)
 }

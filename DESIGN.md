@@ -53,7 +53,8 @@ The bottom row uses Delta Support's terminal input primitive: a fixed `>` in the
 first character cell, the editable value immediately after it, gray placeholder
 text while empty, and a one-logical-pixel caret at the insertion point. The
 value is limited to 16 KiB. It supports selection, clipboard, native IME
-marking, Enter submission, Tab insertion, Escape hide, and Command-Q quit.
+marking, Enter submission, Tab insertion, Escape hide, Command-period Abort,
+and Command-Q quit.
 
 While the backend is busy, Enter sends `steer`; otherwise it sends `prompt`.
 Submitting an empty value does nothing.

@@ -8,6 +8,8 @@ Event_Type_Spec :: struct {
 	event_kind: u32,
 }
 
+Event_Hotkey_ID :: struct {signature, id: u32}
+
 foreign import carbon "system:Carbon.framework"
 foreign carbon {
 	GetApplicationEventTarget :: proc "c" () -> rawptr ---
@@ -23,7 +25,7 @@ foreign carbon {
 	RegisterEventHotKey :: proc "c" (
 		key_code: u32,
 		modifiers: u32,
-		hotkey_id: u32,
+		hotkey_id: Event_Hotkey_ID,
 		target: rawptr,
 		options: u32,
 		hotkey_ref: ^rawptr,
@@ -68,8 +70,8 @@ global_hotkey_start :: proc() -> string {
 	register_status := RegisterEventHotKey(
 		HOTKEY_KEY_GRAVE,
 		HOTKEY_MODIFIER_OPTION,
-		HOTKEY_ID,
-		nil,
+		Event_Hotkey_ID{HOTKEY_ID, 1},
+		GetApplicationEventTarget(),
 		0,
 		&global_hotkey.hotkey_ref,
 	)

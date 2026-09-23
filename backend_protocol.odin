@@ -21,25 +21,25 @@ Backend_Command :: struct {
 	text: string `json:"text,omitempty"`,
 }
 
-backend_event_destroy :: proc(event: ^Backend_Event_Wire) {
-	delete(event.type)
-	delete(event.text)
-	delete(event.role)
-	delete(event.id)
-	delete(event.name)
-	delete(event.arguments)
-	delete(event.summary)
+backend_event_destroy :: proc(event: ^Backend_Event_Wire, allocator := context.allocator) {
+	delete(event.type, allocator)
+	delete(event.text, allocator)
+	delete(event.role, allocator)
+	delete(event.id, allocator)
+	delete(event.name, allocator)
+	delete(event.arguments, allocator)
+	delete(event.summary, allocator)
 	event^ = {}
 }
 
 backend_decode_event :: proc(line: string, allocator := context.allocator) -> (Backend_Event_Wire, bool) {
 	event: Backend_Event_Wire
 	if json.unmarshal(transmute([]u8)line, &event, .JSON, allocator) != nil {
-		backend_event_destroy(&event)
+		backend_event_destroy(&event, allocator)
 		return {}, false
 	}
 	if len(event.type) == 0 {
-		backend_event_destroy(&event)
+		backend_event_destroy(&event, allocator)
 		return {}, false
 	}
 	return event, true
@@ -54,7 +54,7 @@ backend_encode_command :: proc(
 		allocator = allocator,
 	)
 	if err != nil {return "", false}
-	defer delete(payload)
+	defer delete(payload, allocator)
 	return strings.clone(string(payload), allocator), true
 }
 
@@ -62,6 +62,7 @@ launcher_take_input :: proc(state: ^App_State, allocator := context.allocator) -
 	value := strings.trim_space(state.input)
 	if len(value) == 0 {return ""}
 	prompt := strings.clone(value, allocator)
+	text_input.unmark_text(&state.input_state)
 	delete(state.input)
 	state.input = ""
 	text_input.set_selection(&state.input_state, state.input, 0, 0)
@@ -78,12 +79,15 @@ launcher_apply_backend_event :: proc(state: ^App_State, event: Backend_Event_Wir
 		state.backend_status = .Busy
 		state.follow_tail = true
 	case "message_start":
+		if event.role != "Assistant" {return}
 		transcript_begin_assistant(&state.transcript)
 		state.follow_tail = true
 	case "message_update":
+		if event.role != "Assistant" {return}
 		transcript_update_assistant(&state.transcript, event.text)
 		state.follow_tail = true
 	case "message_end":
+		if event.role != "Assistant" {return}
 		transcript_finish_assistant(&state.transcript, event.text)
 		state.follow_tail = true
 	case "tool_start":
@@ -99,6 +103,13 @@ launcher_apply_backend_event :: proc(state: ^App_State, event: Backend_Event_Wir
 		transcript_append(&state.transcript, .Error, event.text)
 		state.follow_tail = true
 	case "__exited":
+		state.transcript.assistant_index = -1
+		for &entry in state.transcript.entries {
+			if entry.tool_running {
+				entry.tool_running = false
+				entry.tool_error = true
+			}
+		}
 		state.backend_status = .Failed
 		transcript_append(&state.transcript, .Error, event.text)
 		state.follow_tail = true

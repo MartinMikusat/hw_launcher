@@ -33,13 +33,13 @@ transcript_tracks_assistant_and_tool :: proc(t: ^testing.T) {
 	prompt := launcher_take_input(&state)
 	defer delete(prompt)
 
-	launcher_apply_backend_event(&state, Backend_Event_Wire{type = "message_start"})
+	launcher_apply_backend_event(&state, Backend_Event_Wire{type = "message_start", role = "Assistant"})
 	launcher_apply_backend_event(&state, Backend_Event_Wire{
-		type = "message_update",
+		type = "message_update", role = "Assistant",
 		text = "working",
 	})
 	launcher_apply_backend_event(&state, Backend_Event_Wire{
-		type = "message_end",
+		type = "message_end", role = "Assistant",
 		text = "done",
 	})
 	launcher_apply_backend_event(&state, Backend_Event_Wire{
@@ -75,4 +75,49 @@ transcript_has_a_hard_entry_bound :: proc(t: ^testing.T) {
 		testing.expect_value(t, len(state.transcript.entries), min(index+2, TRANSCRIPT_MAX_ENTRIES))
 	}
 	testing.expect_value(t, len(state.transcript.entries), TRANSCRIPT_MAX_ENTRIES)
+}
+
+@(test)
+backend_protocol_failure_retry_preserves_transcript_roles :: proc(t: ^testing.T) {
+	state: App_State
+	launcher_state_init(&state)
+	defer launcher_state_destroy(&state)
+	state.input = strings.clone("first prompt")
+	prompt := launcher_take_input(&state)
+	delete(prompt)
+	for line in ([]string{
+		`{"type":"ready"}`,
+		`{"type":"agent_start"}`,
+		`{"type":"message_start","role":"User"}`,
+		`{"type":"message_end","role":"User","text":"first prompt"}`,
+		`{"type":"message_start","role":"Assistant"}`,
+		`{"type":"message_update","role":"Assistant","text":"partial reply"}`,
+		`{"type":"message_start","role":"User"}`,
+		`{"type":"message_end","role":"User","text":"steering echo"}`,
+		`{"type":"tool_start","id":"call-1","name":"bash","arguments":"sleep 10"}`,
+		`{"type":"__exited","text":"backend stopped"}`,
+	}) {
+		event, ok := backend_decode_event(line)
+		if !testing.expect(t, ok) {return}
+		launcher_apply_backend_event(&state, event)
+		backend_event_destroy(&event)
+	}
+	testing.expect_value(t, len(state.transcript.entries), 5)
+	testing.expect_value(t, state.transcript.entries[2].text, "partial reply")
+	testing.expect_value(t, state.transcript.assistant_index, -1)
+	testing.expect(t, !state.transcript.entries[3].tool_running && state.transcript.entries[3].tool_error)
+	launcher_apply_backend_event(&state, {type = "ready"})
+	launcher_apply_backend_event(&state, {type = "message_update", role = "Assistant", text = "new reply"})
+	launcher_apply_backend_event(&state, {type = "message_end", role = "Assistant", text = "finished"})
+	testing.expect_value(t, state.transcript.entries[2].text, "partial reply")
+	testing.expect_value(t, state.transcript.entries[5].text, "finished")
+	testing.expect_value(t, state.transcript.assistant_index, -1)
+}
+
+@(test)
+offscreen_fixture_releases_owned_input :: proc(t: ^testing.T) {
+	launcher_state_init(&launcher)
+	offscreen_fixture()
+	testing.expect(t, len(launcher.input) > 0)
+	launcher_state_destroy(&launcher)
 }

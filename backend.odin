@@ -1,11 +1,13 @@
 package launcher
 
 import "base:runtime"
+import "base:intrinsics"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:thread"
+import "core:sys/posix"
 
 BACKEND_EVENT_MAX_BYTES :: 1 << 20
 
@@ -19,9 +21,16 @@ Agent_Backend :: struct {
 	started:       bool,
 	running:       bool,
 	accept_events: bool,
+	stop_reader:   bool,
 }
 
 backend: Agent_Backend
+backend_generation: u64
+
+Backend_Queued_Event :: struct {
+	event: Backend_Event_Wire,
+	generation: u64,
+}
 
 backend_init :: proc() {
 	backend = {}
@@ -39,7 +48,7 @@ backend_default_path :: proc(allocator := context.allocator) -> string {
 	}
 	executable, err := os.get_executable_path(allocator)
 	if err != nil || len(executable) == 0 {return ""}
-	defer delete(executable)
+	defer delete(executable, allocator)
 	build_directory := filepath.dir(executable)
 	project_directory := filepath.dir(build_directory)
 	path, join_error := filepath.join(
@@ -52,6 +61,7 @@ backend_default_path :: proc(allocator := context.allocator) -> string {
 
 backend_cleanup :: proc() {
 	backend.accept_events = false
+	intrinsics.atomic_store(&backend.stop_reader, true)
 	if backend.stdin_file != nil {
 		_ = os.close(backend.stdin_file)
 		backend.stdin_file = nil
@@ -61,22 +71,29 @@ backend_cleanup :: proc() {
 		_, _ = os.process_wait(backend.process)
 		backend.started = false
 	}
-	if backend.stdout_file != nil {
-		_ = os.close(backend.stdout_file)
-		backend.stdout_file = nil
-	}
 	if backend.reader != nil {
 		thread.join(backend.reader)
 		thread.destroy(backend.reader)
 		backend.reader = nil
 	}
+	if backend.stdout_file != nil {
+		_ = os.close(backend.stdout_file)
+		backend.stdout_file = nil
+	}
 	backend.running = false
 	if len(backend.stderr_path) > 0 {
 		_ = os.remove(backend.stderr_path)
 		delete(backend.stderr_path)
+		backend.stderr_path = ""
 	}
 	delete(backend.path)
 	backend.path = ""
+}
+
+backend_protect_pipe :: proc(file: ^os.File) -> bool {
+	// macOS <sys/fcntl.h>: suppress SIGPIPE on this descriptor only.
+	F_SETNOSIGPIPE :: posix.FCNTL_Cmd(73)
+	return posix.fcntl(posix.FD(os.fd(file)), F_SETNOSIGPIPE, i32(1)) == 0
 }
 
 backend_stop :: proc(state: ^App_State) {
@@ -98,6 +115,12 @@ backend_start :: proc(state: ^App_State) -> string {
 	if stdin_error != nil {
 		defer delete(path)
 		return "Could not create the backend input pipe."
+	}
+	if !backend_protect_pipe(stdin_write) {
+		_ = os.close(stdin_read)
+		_ = os.close(stdin_write)
+		delete(path)
+		return "Could not configure the backend input pipe."
 	}
 	stdout_read, stdout_write, stdout_error := os.pipe()
 	if stdout_error != nil {
@@ -150,7 +173,7 @@ backend_start :: proc(state: ^App_State) -> string {
 		_ = os.close(stdout_read)
 		_ = os.remove(owned_stderr_path)
 		delete(owned_stderr_path)
-		delete(path)
+		defer delete(path)
 		return fmt.tprintf("Could not start %s: %v", path, start_error)
 	}
 
@@ -162,6 +185,8 @@ backend_start :: proc(state: ^App_State) -> string {
 	backend.started = true
 	backend.running = true
 	backend.accept_events = true
+	backend_generation += 1
+	intrinsics.atomic_store(&backend.stop_reader, false)
 	backend.reader = thread.create(backend_reader_thread)
 	if backend.reader == nil {
 		backend_cleanup()
@@ -184,7 +209,7 @@ read_limited_file :: proc(path: string, limit: int, allocator := context.allocat
 		if count > 0 {append(&data, ..buffer[:count])}
 		if read_error != nil || count <= 0 {break}
 	}
-	return string(transmute([]u8)data[:])
+	return strings.clone(string(data[:]), allocator)
 }
 
 backend_reader_thread :: proc(_: ^thread.Thread) {
@@ -194,6 +219,15 @@ backend_reader_thread :: proc(_: ^thread.Thread) {
 	buffer: [64 << 10]u8
 
 	read_loop: for {
+		if intrinsics.atomic_load(&backend.stop_reader) {return}
+		// A descendant may still hold stdout open after the child exits.
+		poll_fd := posix.pollfd{fd = posix.FD(os.fd(backend.stdout_file)), events = {.IN}}
+		ready := posix.poll(&poll_fd, 1, 100)
+		if ready == 0 {continue}
+		if ready < 0 {
+			if posix.errno() == .EINTR {continue}
+			break
+		}
 		count, read_error := os.read(backend.stdout_file, buffer[:])
 		if count > 0 {
 			for value, index in buffer[:count] {
@@ -223,6 +257,7 @@ backend_reader_thread :: proc(_: ^thread.Thread) {
 		}
 		if read_error != nil || count <= 0 {break}
 	}
+	if intrinsics.atomic_load(&backend.stop_reader) {return}
 	diagnostic_text := read_limited_file(backend.stderr_path, 64 << 10)
 	defer delete(diagnostic_text)
 	if diagnostic := strings.trim_space(diagnostic_text); len(diagnostic) > 0 {
@@ -240,27 +275,31 @@ backend_dispatch_local :: proc(kind, value: string) {
 }
 
 backend_dispatch_event :: proc(event: Backend_Event_Wire) {
-	boxed := new(Backend_Event_Wire, context.allocator)
-	boxed^ = event
+	boxed := new(Backend_Queued_Event, context.allocator)
+	boxed^ = {event = event, generation = backend_generation}
 	dispatch_async_f(&_dispatch_main_q, rawptr(boxed), backend_apply_event_c)
 }
 
 backend_apply_event_c :: proc "c" (raw_event: rawptr) {
 	context = runtime.default_context()
-	event := (^Backend_Event_Wire)(raw_event)
-	if backend.accept_events {
+	backend_apply_queued_event((^Backend_Queued_Event)(raw_event))
+}
+
+backend_apply_queued_event :: proc(queued: ^Backend_Queued_Event) {
+	defer free(queued)
+	event := &queued.event
+	defer backend_event_destroy(event)
+	if backend.accept_events && queued.generation == backend_generation {
 		launcher_apply_backend_event(&launcher, event^)
 		launcher_request_redraw()
 		if event.type == "__exited" {backend.running = false}
 	}
-	backend_event_destroy(event)
 }
 
 backend_send :: proc(command, text: string) -> string {
 	if !backend.running || backend.stdin_file == nil {return "The backend is not running."}
 	frame, ok := backend_encode_command(command, text, context.temp_allocator)
 	if !ok {return "Could not encode the backend command."}
-	defer delete(frame)
 	defer free_all(context.temp_allocator)
 
 	payload := make([dynamic]u8, 0, len(frame)+1, context.temp_allocator)

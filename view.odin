@@ -15,7 +15,6 @@ import metal "ui_framework:metal"
 LAUNCHER_WIDTH :: f32(760)
 LAUNCHER_HEIGHT :: f32(520)
 LAUNCHER_FONT_PIXELS :: 13
-LAUNCHER_SCROLL_FOLLOW_DELTA :: f32(1 << 20)
 
 Custom_Render_Kind :: enum {Input}
 
@@ -321,16 +320,19 @@ view_begin_frame :: proc(width, height: f32) -> []hw_clay.Render_Command {
 	launcher_view.renderer.viewport_height = height
 	view_update_style()
 	hw_clay.set_layout_dimensions(&launcher_view.clay, {width, height})
+	commands := view_build_tree(&launcher_view.clay)
 	if launcher.follow_tail {
-		hw_clay.update_scroll_containers(
-			&launcher_view.clay,
-			false,
-			{0, LAUNCHER_SCROLL_FOLLOW_DELTA},
-			1.0/60.0,
-		)
-		launcher.follow_tail = false
+		scroll := hw_clay.get_scroll_container_data(&launcher_view.clay, hw_clay.id("launcher-scroll"))
+		if scroll.found {
+			tail := -max(scroll.content_dimensions.height-scroll.scroll_container_dimensions.height, 0)
+			if scroll.scroll_position.y != tail {
+				scroll.scroll_position.y = tail
+				commands = view_build_tree(&launcher_view.clay)
+			}
+			launcher.follow_tail = false
+		}
 	}
-	return view_build_tree(&launcher_view.clay)
+	return commands
 }
 
 view_input_box :: proc() -> (hw_clay.Bounding_Box, bool) {
@@ -338,14 +340,12 @@ view_input_box :: proc() -> (hw_clay.Bounding_Box, bool) {
 	return data.bounding_box, data.found
 }
 
-view_handle_click :: proc() -> bool {
-	for id in hw_clay.get_pointer_over_ids(&launcher_view.clay) {
-		if id == hw_clay.id("launcher-abort") {
-			backend_abort(&launcher)
-			return true
-		}
-	}
-	return false
+view_abort_at_point :: proc(point: hw_clay.Vector2) -> bool {
+	if launcher.backend_status != .Busy && launcher.backend_status != .Starting {return false}
+	data := hw_clay.get_element_data(&launcher_view.clay, hw_clay.id("launcher-abort"))
+	box := data.bounding_box
+	return data.found && point.x >= box.x && point.x < box.x+box.width &&
+		point.y >= box.y && point.y < box.y+box.height
 }
 
 launcher_request_redraw :: proc() {

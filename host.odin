@@ -37,7 +37,7 @@ Panel_Host :: struct {
 	pointer:      hw_clay.Vector2,
 	pointer_valid: bool,
 	pointer_down: bool,
-	click_pending: bool,
+	abort_pressed: bool,
 	scroll_delta: hw_clay.Vector2,
 }
 
@@ -64,7 +64,8 @@ panel_make_controller :: proc() -> Id {
 panel_make_delegate :: proc() -> Id {
 	class := objc_allocateClassPair(objc_getClass("NSObject"), "LauncherPanelDelegate", 0)
 	if class == nil {return nil}
-	if !panel_add_method(class, "windowDidResignKey:", rawptr(panel_did_resign_key), "v@:@") {
+	if !panel_add_method(class, "windowDidResignKey:", rawptr(panel_did_resign_key), "v@:@") ||
+	   !panel_add_method(class, "applicationWillTerminate:", rawptr(panel_will_terminate), "v@:@") {
 		return nil
 	}
 	objc_registerClassPair(class)
@@ -164,6 +165,7 @@ panel_init :: proc() -> bool {
 	macos.display_link_set_paused(&panel_window.display_link, true)
 
 	panel_window.app = msg_id0(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
+	msg_void_id(panel_window.app, sel_registerName("setDelegate:"), delegate)
 	msg_void_i(panel_window.app, sel_registerName("setActivationPolicy:"), 1)
 	status_bar := msg_id0(objc_getClass("NSStatusBar"), sel_registerName("systemStatusBar"))
 	status_item := msg_id_f64(status_bar, sel_registerName("statusItemWithLength:"), -1)
@@ -222,14 +224,11 @@ panel_make_first_responder :: proc() {
 }
 
 panel_reset_caret :: proc() {
-	if !panel_window.visible || !input_focused() {
-		if panel_window.caret_timer != nil {
-			msg_void0(panel_window.caret_timer, sel_registerName("invalidate"))
-			panel_window.caret_timer = nil
-		}
-		return
+	if panel_window.caret_timer != nil {
+		msg_void0(panel_window.caret_timer, sel_registerName("invalidate"))
+		panel_window.caret_timer = nil
 	}
-	if panel_window.caret_timer != nil {return}
+	if !panel_window.visible || !input_focused() {return}
 	panel_window.caret_timer = NS.Timer_scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeat(
 		0.5,
 		(^NS.Object)(panel_window.controller),
@@ -272,10 +271,6 @@ panel_draw :: proc() {
 		panel_window.pointer_valid ? panel_window.pointer : {-1, -1},
 		panel_window.pointer_down,
 	)
-	if panel_window.click_pending {
-		panel_window.click_pending = false
-		_ = view_handle_click()
-	}
 	if panel_window.scroll_delta.x != 0 || panel_window.scroll_delta.y != 0 {
 		hw_clay.update_scroll_containers(
 			&launcher_view.clay,
@@ -341,7 +336,10 @@ panel_window_hide :: proc() {
 	panel_window.visible = false
 	panel_window.pointer_valid = false
 	panel_window.pointer_down = false
-	panel_window.click_pending = false
+	panel_window.abort_pressed = false
+	panel_window.scroll_delta = {}
+	panel_window.frames_pending = 0
+	macos.display_link_set_paused(&panel_window.display_link, true)
 	_ = input_blur()
 	if panel_window.caret_timer != nil {
 		msg_void0(panel_window.caret_timer, sel_registerName("invalidate"))
@@ -370,7 +368,8 @@ panel_shutdown :: proc() {
 	}
 	macos.display_link_stop(&panel_window.display_link)
 	if panel_window.status_item != nil {
-		msg_void0(panel_window.status_item, sel_registerName("remove"))
+		status_bar := msg_id0(objc_getClass("NSStatusBar"), sel_registerName("systemStatusBar"))
+		msg_void_id(status_bar, sel_registerName("removeStatusItem:"), panel_window.status_item)
 	}
 	view_destroy()
 	panel_window = {}
@@ -378,7 +377,7 @@ panel_shutdown :: proc() {
 
 panel_frame_callback :: proc "c" (self: Id, command: Sel, timer: Id) {
 	context = runtime.default_context()
-	if panel_window.frames_pending <= 0 {
+	if !panel_window.visible || panel_window.frames_pending <= 0 {
 		macos.display_link_set_paused(&panel_window.display_link, true)
 		return
 	}
@@ -400,6 +399,7 @@ panel_caret_blink :: proc "c" (self: Id, command: Sel, timer: Id) {
 	panel_window.caret_timer = nil
 	launcher_view.caret_visible = !launcher_view.caret_visible
 	panel_mark_dirty()
+	panel_reset_caret()
 }
 
 panel_accepts_first_responder :: proc "c" (self: Id, command: Sel) -> bool {return true}
@@ -409,6 +409,23 @@ panel_can_become_key :: proc "c" (self: Id, command: Sel) -> bool {return true}
 panel_did_resign_key :: proc "c" (self: Id, command: Sel, notification: Id) {
 	context = runtime.default_context()
 	panel_window_hide()
+}
+
+panel_will_terminate :: proc "c" (self: Id, command: Sel, notification: Id) {
+	context = runtime.default_context()
+	launcher_shutdown()
+}
+
+panel_native_rect :: proc(rect: hw_clay.Bounding_Box) -> Rect {
+	return {{f64(rect.x), f64(launcher_view.height-rect.y-rect.height)},
+		{f64(rect.width), f64(rect.height)}}
+}
+
+panel_rect_to_screen :: proc(rect: hw_clay.Bounding_Box) -> Rect {
+	if panel_window.view == nil || panel_window.window == nil {return {}}
+	local := panel_native_rect(rect)
+	window_rect := msg_rect_rect_id(panel_window.view, sel_registerName("convertRect:toView:"), local, nil)
+	return msg_rect_rect(panel_window.window, sel_registerName("convertRectToScreen:"), window_rect)
 }
 
 panel_pointer_update :: proc(event: ^NS.Event, down: bool) {
@@ -424,14 +441,26 @@ panel_pointer_update :: proc(event: ^NS.Event, down: bool) {
 panel_mouse_down :: proc "c" (self: Id, command: Sel, event: ^NS.Event) {
 	context = runtime.default_context()
 	panel_pointer_update(event, true)
-	input_pointer_begin({f64(panel_window.pointer.x), f64(panel_window.pointer.y)}, uint(event->clickCount()))
+	panel_pointer_press(panel_window.pointer, uint(event->clickCount()))
 }
 
 panel_mouse_up :: proc "c" (self: Id, command: Sel, event: ^NS.Event) {
 	context = runtime.default_context()
 	panel_pointer_update(event, false)
+	panel_pointer_release(panel_window.pointer)
+}
+
+panel_pointer_press :: proc(point: hw_clay.Vector2, clicks: uint) {
+	panel_window.abort_pressed = view_abort_at_point(point)
+	input_pointer_begin({f64(point.x), f64(point.y)}, clicks)
+}
+
+panel_pointer_release :: proc(point: hw_clay.Vector2) {
 	text_input.end_pointer_selection(&launcher.input_state)
-	panel_window.click_pending = true
+	if panel_window.abort_pressed && view_abort_at_point(point) {
+		backend_abort(&launcher)
+	}
+	panel_window.abort_pressed = false
 	panel_mark_dirty()
 }
 
@@ -460,6 +489,7 @@ panel_key_down :: proc "c" (self: Id, command: Sel, event: ^NS.Event) {
 	modifiers := event->modifierFlags()
 	key := uint(event->keyCode())
 	if .Command in modifiers && key == 12 {panel_quit(); return}
+	if .Command in modifiers && key == 47 {backend_abort(&launcher); return}
 	if key == 53 {panel_window_hide(); return}
 	input_interpret_event(rawptr(event))
 }

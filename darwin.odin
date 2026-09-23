@@ -28,6 +28,7 @@ foreign objc_runtime {
 	class_addProtocol      :: proc "c" (cls: Id, protocol: Id) -> bool ---
 	class_getSuperclass    :: proc "c" (cls: Id) -> Id ---
 	sel_registerName       :: proc "c" (name: cstring) -> Sel ---
+	sel_getName            :: proc "c" (selector: Sel) -> cstring ---
 }
 
 objc_send_address: rawptr

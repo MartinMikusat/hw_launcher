@@ -2,6 +2,7 @@ package launcher
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import MTL "vendor:darwin/Metal"
 import NS "core:sys/darwin/Foundation"
 import delta_settings "delta_support:settings"
@@ -31,7 +32,7 @@ write_ppm :: proc(path: string, pixels: []u8, width, height: int) -> bool {
 	_, write_error := os.write_string(file, fmt.tprintf("P6\n%d %d\n255\n", width, height))
 	if write_error != os.ERROR_NONE {return false}
 	row := make([]u8, width*3, context.temp_allocator)
-	defer delete(row)
+	defer delete(row, context.temp_allocator)
 	for y in 0 ..< height {
 		for x in 0 ..< width {
 			pixel := (y*width+x)*4
@@ -50,13 +51,13 @@ offscreen_fixture :: proc() {
 		.User,
 		"Summarize the launcher architecture and run the focused tests.",
 	)
-	launcher_apply_backend_event(&launcher, Backend_Event_Wire{type = "message_start"})
+	launcher_apply_backend_event(&launcher, Backend_Event_Wire{type = "message_start", role = "Assistant"})
 	launcher_apply_backend_event(&launcher, Backend_Event_Wire{
-		type = "message_update",
+		type = "message_update", role = "Assistant",
 		text = "I will inspect the project structure, then run the smallest relevant checks.",
 	})
 	launcher_apply_backend_event(&launcher, Backend_Event_Wire{
-		type = "message_end",
+		type = "message_end", role = "Assistant",
 		text = "I will inspect the project structure, then run the smallest relevant checks.",
 	})
 	launcher_apply_backend_event(&launcher, Backend_Event_Wire{
@@ -70,17 +71,17 @@ offscreen_fixture :: proc() {
 		id = "fixture-tool-1",
 		text = "5 tests passed",
 	})
-	launcher_apply_backend_event(&launcher, Backend_Event_Wire{type = "message_start"})
+	launcher_apply_backend_event(&launcher, Backend_Event_Wire{type = "message_start", role = "Assistant"})
 	launcher_apply_backend_event(&launcher, Backend_Event_Wire{
-		type = "message_update",
+		type = "message_update", role = "Assistant",
 		text = "The Odin backend and launcher protocol are passing. The remaining work is visual acceptance and manual window testing.",
 	})
 	launcher_apply_backend_event(&launcher, Backend_Event_Wire{
-		type = "message_end",
+		type = "message_end", role = "Assistant",
 		text = "The Odin backend and launcher protocol are passing. The remaining work is visual acceptance and manual window testing.",
 	})
 	launcher.backend_status = .Ready
-	launcher.input = "Show the remaining gaps"
+	launcher.input = strings.clone("Show the remaining gaps")
 	_ = text_input.focus(&launcher.input_state, LAUNCHER_INPUT_FIELD, launcher.input)
 	text_input.move_line_end(&launcher.input_state, launcher.input, false)
 	launcher.follow_tail = true

@@ -9,14 +9,14 @@ ACCESSIBILITY_TRANSCRIPT_MAX_BYTES :: 64 << 10
 accessibility_class: Id
 
 accessibility_init :: proc() -> bool {
+	if accessibility_class != nil {return true}
 	class := objc_allocateClassPair(
 		objc_getClass("NSAccessibilityElement"),
 		"LauncherAccessibilityElement",
 		0,
 	)
 	if class == nil {return false}
-	if !panel_add_method(class, "accessibilityIsElement", rawptr(accessibility_is_element), "B@:") ||
-	   !panel_add_method(class, "accessibilityValue", rawptr(accessibility_value), "@@:") ||
+	if !panel_add_method(class, "isAccessibilityElement", rawptr(accessibility_is_element), "B@:") ||
 	   !panel_add_method(class, "accessibilityPerformPress", rawptr(accessibility_press), "B@:") {
 		return false
 	}
@@ -27,11 +27,6 @@ accessibility_init :: proc() -> bool {
 
 accessibility_is_element :: proc "c" (self: Id, command: Sel) -> bool {
 	return true
-}
-
-accessibility_value :: proc "c" (self: Id, command: Sel) -> Id {
-	context = runtime.default_context()
-	return nsstring(launcher.input)
 }
 
 accessibility_press :: proc "c" (self: Id, command: Sel) -> bool {
@@ -55,37 +50,34 @@ accessibility_transcript_text :: proc(
 	state: ^App_State,
 	allocator := context.allocator,
 ) -> string {
-	builder := strings.builder_make(allocator)
-	truncated := false
+	// Stream the suffix of the logical transcript without allocating omitted text.
+	prefixes := [Transcript_Kind]string{.Notice = "Status: ", .User = "You: ",
+		.Assistant = "Assistant: ", .Tool = "Tool ", .Error = "Error: "}
+	total := 0
 	for &entry in state.transcript.entries {
-		remaining := ACCESSIBILITY_TRANSCRIPT_MAX_BYTES-strings.builder_len(builder)
-		if remaining <= 32 {truncated = true; break}
-		switch entry.kind {
-		case .Notice:
-			strings.write_string(&builder, "Status: ")
-		case .User:
-			strings.write_string(&builder, "You: ")
-		case .Assistant:
-			strings.write_string(&builder, "Assistant: ")
-		case .Tool:
-			strings.write_string(&builder, "Tool ")
-			strings.write_string(&builder, entry.tool_name)
-			strings.write_string(&builder, ": ")
-		case .Error:
-			strings.write_string(&builder, "Error: ")
-		}
-		value := bounded_text(
-			entry.text,
-			max(1, remaining-strings.builder_len(builder)),
-			context.temp_allocator,
-		)
-		strings.write_string(&builder, value)
-		strings.write_string(&builder, "\n")
-		if len(value) < len(entry.text) {truncated = true; break}
+		total += len(prefixes[entry.kind])+len(entry.text)+1
+		if entry.kind == .Tool {total += len(entry.tool_name)+2}
 	}
-	if truncated {strings.write_string(&builder, "Earlier transcript omitted.\n")}
-	strings.write_string(&builder, "Prompt: ")
-	strings.write_string(&builder, state.input)
+	marker :: "Earlier transcript omitted.\n"
+	budget := ACCESSIBILITY_TRANSCRIPT_MAX_BYTES
+	builder := strings.builder_make(allocator)
+	if total > budget {
+		strings.write_string(&builder, marker)
+		budget -= len(marker)
+	}
+	skip := max(0, total-budget)
+	for &entry in state.transcript.entries {
+		parts := [5]string{prefixes[entry.kind], "", "", entry.text, "\n"}
+		if entry.kind == .Tool {parts[1], parts[2] = entry.tool_name, ": "}
+		for part in parts {
+			if skip >= len(part) {skip -= len(part); continue}
+			start := skip
+			skip = 0
+			for start < len(part) && part[start]&0xC0 == 0x80 {start += 1}
+			strings.write_string(&builder, part[start:])
+		}
+	}
+	// The prompt has its own AXTextField; do not duplicate it in scrollback.
 	return strings.to_string(builder)
 }
 
@@ -99,21 +91,8 @@ accessibility_add_element :: proc(
 	msg_void_id(element, sel_registerName("setAccessibilityParent:"), panel_window.view)
 	msg_void_id(element, sel_registerName("setAccessibilityRole:"), nsstring(role))
 	msg_void_id(element, sel_registerName("setAccessibilityLabel:"), nsstring(label))
-	if role != "AXTextField" && len(value) > 0 {
-		msg_void_id(element, sel_registerName("setAccessibilityValue:"), nsstring(value))
-	}
-	local := Rect{{f64(rect.x), f64(rect.y)}, {f64(rect.width), f64(rect.height)}}
-	window_rect := msg_rect_rect_id(
-		panel_window.view,
-		sel_registerName("convertRect:toView:"),
-		local,
-		nil,
-	)
-	screen_rect := msg_rect_rect(
-		panel_window.window,
-		sel_registerName("convertRectToScreen:"),
-		window_rect,
-	)
+	msg_void_id(element, sel_registerName("setAccessibilityValue:"), nsstring(value))
+	screen_rect := panel_rect_to_screen(rect)
 	msg_void_rect(element, sel_registerName("setAccessibilityFrame:"), screen_rect)
 	msg_void_id(array, sel_registerName("addObject:"), element)
 	msg_void0(element, sel_registerName("release"))
@@ -159,7 +138,7 @@ accessibility_rebuild :: proc() {
 	if launcher.backend_status == .Busy || launcher.backend_status == .Starting {
 		abort_box := hw_clay.get_element_data(&launcher_view.clay, hw_clay.id("launcher-abort"))
 		if abort_box.found {
-			accessibility_add_element(array, "AXButton", "Abort agent", "", abort_box.bounding_box)
+			accessibility_add_element(array, "AXButton", "Abort agent (Command-period)", "", abort_box.bounding_box)
 		}
 	}
 	msg_void_id(panel_window.view, sel_registerName("setAccessibilityChildren:"), array)

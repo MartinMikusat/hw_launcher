@@ -58,7 +58,7 @@ launcher_state_init :: proc(state: ^App_State, allocator := context.allocator) {
 launcher_state_destroy :: proc(state: ^App_State) {
 	transcript_destroy(&state.transcript)
 	delete(state.input)
-	state.input_state = {}
+	text_input.destroy(&state.input_state)
 	state^ = {}
 }
 

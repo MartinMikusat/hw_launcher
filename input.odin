@@ -1,9 +1,13 @@
 package launcher
 
 import "base:runtime"
+import NS "core:sys/darwin/Foundation"
+import hw_clay "hw_clay:."
 import delta_ui "delta_support:ui"
 import text_input "components:text_input"
 import coretext "ui_framework:coretext"
+
+NS_NOT_FOUND :: uint(NS.NotFound)
 
 LAUNCHER_INPUT_FIELD :: text_input.Field_ID(1)
 LAUNCHER_INPUT_MAX_BYTES :: 16 << 10
@@ -19,7 +23,6 @@ input_reset_caret :: proc() {
 
 input_focus :: proc() {
 	_ = text_input.focus(&launcher.input_state, LAUNCHER_INPUT_FIELD, launcher.input)
-	text_input.move_line_end(&launcher.input_state, launcher.input, false)
 	panel_make_first_responder()
 	input_reset_caret()
 	panel_mark_dirty()
@@ -31,25 +34,54 @@ input_blur :: proc() -> bool {
 	return blurred
 }
 
-input_value_valid :: proc(value: string) -> bool {
-	if len(value) == 0 {return true}
+input_byte_range :: proc(value: string, range: ns_range) -> (start, end: int, valid: bool) {
+	count := uint(text_input.utf16_index_for_byte_offset(value, len(value)))
+	if range.location > count || range.length > count-range.location {return}
+	start = text_input.byte_offset_for_utf16_index(value, int(range.location))
+	end = text_input.byte_offset_for_utf16_index(value, int(range.location+range.length))
+	// Reject ranges that split a surrogate pair instead of silently moving them.
+	valid = uint(text_input.utf16_index_for_byte_offset(value, start)) == range.location &&
+		uint(text_input.utf16_index_for_byte_offset(value, end)) == range.location+range.length
+	return
+}
+
+input_prepare_replacement :: proc(value: string, replacement: ns_range) -> bool {
+	if !input_focused() {return false}
 	for character in value {
 		if character < 32 && character != '\t' {return false}
 		if character >= 0xF700 && character <= 0xF8FF {return false}
 	}
 	start, end := text_input.selection_bounds(&launcher.input_state, launcher.input)
-	replaced := launcher.input_state.has_marked_text ? len(launcher.input_state.marked_text) : end-start
-	return len(launcher.input)-replaced+len(value) <= LAUNCHER_INPUT_MAX_BYTES
+	if replacement.location != NS_NOT_FOUND {
+		valid: bool
+		start, end, valid = input_byte_range(launcher.input, replacement)
+		if !valid {return false}
+	} else if launcher.input_state.has_marked_text {
+		start = launcher.input_state.marked_start_byte
+		end = start+len(launcher.input_state.marked_text)
+	}
+	if len(value) > LAUNCHER_INPUT_MAX_BYTES-(len(launcher.input)-(end-start)) {return false}
+	text_input.unmark_text(&launcher.input_state)
+	text_input.set_selection(&launcher.input_state, launcher.input, start, end)
+	return true
 }
 
-input_insert :: proc(value: string) {
-	if !input_focused() || !input_value_valid(value) {return}
-	_ = text_input.remove_marked_text(&launcher.input_state, &launcher.input)
+input_insert :: proc(value: string, replacement := ns_range{NS_NOT_FOUND, 0}) {
+	if !input_prepare_replacement(value, replacement) {return}
 	if text_input.insert_text(&launcher.input_state, &launcher.input, value) {
 		input_reset_caret()
 		panel_mark_dirty()
 	}
 	text_input.unmark_text(&launcher.input_state)
+}
+
+input_set_marked :: proc(value: string, selected, replacement: ns_range) {
+	_, _, valid := input_byte_range(value, selected)
+	if !valid || !input_prepare_replacement(value, replacement) {return}
+	_ = text_input.set_marked_text(&launcher.input_state, &launcher.input, value,
+		int(selected.location), int(selected.length))
+	input_reset_caret()
+	panel_mark_dirty()
 }
 
 input_submit :: proc() {
@@ -157,6 +189,7 @@ input_pointer_begin :: proc(point: Point, clicks: uint) -> bool {
 	   f32(point.y) < text_box.y || f32(point.y) >= text_box.y+text_box.height {
 		return false
 	}
+	input_focus()
 	offset := input_offset_at_point(point)
 	text_input.begin_pointer_selection(
 		&launcher.input_state,
@@ -165,7 +198,6 @@ input_pointer_begin :: proc(point: Point, clicks: uint) -> bool {
 		offset,
 		clicks,
 	)
-	input_focus()
 	return true
 }
 
@@ -185,6 +217,9 @@ input_pointer_update :: proc(point: Point) -> bool {
 
 input_native_text :: proc(value: Id) -> string {
 	if value == nil {return ""}
+	if msg_bool_id(value, sel_registerName("isKindOfClass:"), objc_getClass("NSAttributedString")) {
+		return nsstring_to_string(msg_id0(value, sel_registerName("string")))
+	}
 	return nsstring_to_string(value)
 }
 
@@ -193,11 +228,10 @@ launcher_on_text_insert :: proc "c" (
 	command: Sel,
 	value: Id,
 	replacement: ns_range,
-) -> bool {
+) {
 	context = runtime.default_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-	input_insert(input_native_text(value))
-	return true
+	input_insert(input_native_text(value), replacement)
 }
 
 launcher_on_text_set_marked :: proc "c" (
@@ -208,18 +242,7 @@ launcher_on_text_set_marked :: proc "c" (
 ) {
 	context = runtime.default_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-	text := input_native_text(value)
-	if !input_value_valid(text) {return}
-	_ = text_input.remove_marked_text(&launcher.input_state, &launcher.input)
-	_ = text_input.set_marked_text(
-		&launcher.input_state,
-		&launcher.input,
-		text,
-		int(selected.location),
-		int(selected.length),
-	)
-	input_reset_caret()
-	panel_mark_dirty()
+	input_set_marked(input_native_text(value), selected, replacement)
 }
 
 launcher_on_text_unmark :: proc "c" (self: Id, command: Sel) {
@@ -235,13 +258,13 @@ launcher_on_text_has_marked :: proc "c" (self: Id, command: Sel) -> bool {
 }
 
 input_ns_range :: proc(value: text_input.UTF16_Range) -> ns_range {
-	if !value.valid {return {~uint(0), 0}}
+	if !value.valid {return {NS_NOT_FOUND, 0}}
 	return {uint(value.location), uint(value.length)}
 }
 
 launcher_on_text_range :: proc "c" (self: Id, command: Sel) -> ns_range {
 	context = runtime.default_context()
-	if !input_focused() {return {~uint(0), 0}}
+	if !input_focused() {return {NS_NOT_FOUND, 0}}
 	if command == sel_registerName("markedRange") {
 		return input_ns_range(text_input.marked_utf16_range(&launcher.input_state, launcher.input))
 	}
@@ -260,13 +283,50 @@ launcher_on_text_substring :: proc "c" (
 	actual: ^ns_range,
 ) -> Id {
 	context = runtime.default_context()
-	return nil
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	if actual != nil {actual^ = {NS_NOT_FOUND, 0}}
+	start, end, valid := input_byte_range(launcher.input, range)
+	if !valid {return nil}
+	if actual != nil {actual^ = range}
+	value := msg_id_id(msg_id0(objc_getClass("NSAttributedString"), sel_registerName("alloc")),
+		sel_registerName("initWithString:"), nsstring(launcher.input[start:end]))
+	return msg_id0(value, sel_registerName("autorelease"))
 }
 
 launcher_on_text_character_index :: proc "c" (self: Id, command: Sel, point: Point) -> uint {
 	context = runtime.default_context()
+	if panel_window.window == nil || panel_window.view == nil {return NS_NOT_FOUND}
+	window_point := (^NS.Window)(panel_window.window)->convertPointFromScreen({NS.Float(point.x), NS.Float(point.y)})
+	local := (^NS.View)(panel_window.view)->convertPointFromView(window_point, nil)
+	return input_character_index_at_point({f64(local.x), f64(launcher_view.height)-f64(local.y)})
+}
+
+input_character_index_at_point :: proc(point: Point) -> uint {
+	box, found := view_input_box()
+	text_box := delta_ui.input_text_bounds(&launcher_view.style, box)
+	if !found || point.x < f64(text_box.x) || point.x >= f64(text_box.x+text_box.width) ||
+		point.y < f64(text_box.y) || point.y >= f64(text_box.y+text_box.height) {return NS_NOT_FOUND}
 	offset := input_offset_at_point(point)
 	return uint(text_input.utf16_index_for_byte_offset(launcher.input, offset))
+}
+
+input_character_rect :: proc(range: ns_range, actual: ^ns_range) -> (hw_clay.Bounding_Box, bool) {
+	if actual != nil {actual^ = {NS_NOT_FOUND, 0}}
+	_, _, valid := input_byte_range(launcher.input, range)
+	box, found := view_input_box()
+	if !valid || !found {return {}, false}
+	text_box := delta_ui.input_text_bounds(&launcher_view.style, box)
+	x_start, x_end: f32
+	if len(launcher.input) > 0 {
+		run := coretext.shape(&launcher_view.text, delta_ui.FONT_MONO, launcher.input,
+			f32(launcher_view.style.text_size), 0, 0, false)
+		if run == nil {return {}, false}
+		x_start = coretext.offset_for_utf16_index(run, int(range.location), launcher_view.text.backing_scale)
+		x_end = coretext.offset_for_utf16_index(run, int(range.location+range.length), launcher_view.text.backing_scale)
+	}
+	if actual != nil {actual^ = range}
+	return {text_box.x+min(x_start, x_end)-f32(launcher.input_state.scroll_x), text_box.y,
+		abs(x_end-x_start), text_box.height}, true
 }
 
 launcher_on_text_first_rect :: proc "c" (
@@ -276,22 +336,15 @@ launcher_on_text_first_rect :: proc "c" (
 	actual: ^ns_range,
 ) -> Rect {
 	context = runtime.default_context()
-	box, found := view_input_box()
+	box, found := input_character_rect(range, actual)
 	if !found {return {}}
-	text_box := delta_ui.input_text_bounds(&launcher_view.style, box)
-	input_rect := Rect{{f64(text_box.x), f64(text_box.y)}, {f64(text_box.width), f64(text_box.height)}}
-	window_box := msg_rect_rect_id(
-		panel_window.view,
-		sel_registerName("convertRect:toView:"),
-		input_rect,
-		nil,
-	)
-	return msg_rect_rect(panel_window.window, sel_registerName("convertRectToScreen:"), window_box)
+	return panel_rect_to_screen(box)
 }
 
 launcher_on_text_command :: proc "c" (self: Id, command: Sel, selector: Sel) {
 	context = runtime.default_context()
-	_ = input_command(nsstring_to_string(selector))
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	_ = input_command(string(sel_getName(selector)))
 }
 
 input_interpret_event :: proc(event: Id) {
@@ -303,7 +356,7 @@ input_register_methods :: proc(class: Id) -> bool {
 	if protocol := objc_getProtocol("NSTextInputClient"); protocol != nil {
 		_ = class_addProtocol(class, protocol)
 	}
-	return class_addMethod(class, sel_registerName("insertText:replacementRange:"), rawptr(launcher_on_text_insert), "B@:@{_NSRange=QQ}") &&
+	return class_addMethod(class, sel_registerName("insertText:replacementRange:"), rawptr(launcher_on_text_insert), "v@:@{_NSRange=QQ}") &&
 		class_addMethod(class, sel_registerName("setMarkedText:selectedRange:replacementRange:"), rawptr(launcher_on_text_set_marked), "v@:@{_NSRange=QQ}{_NSRange=QQ}") &&
 		class_addMethod(class, sel_registerName("doCommandBySelector:"), rawptr(launcher_on_text_command), "v@::") &&
 		class_addMethod(class, sel_registerName("unmarkText"), rawptr(launcher_on_text_unmark), "v@:") &&

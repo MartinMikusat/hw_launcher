@@ -7,6 +7,8 @@ ODIN_LIBS=$(CDPATH= cd -- "$ROOT/../odin_libraries" && pwd)
 
 # shellcheck disable=SC2086
 hw-odin test "$ROOT" \
+  -define:ODIN_TEST_THREADS=1 \
+  -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true \
   -collection:delta_support="$ODIN_LIBS/hw_odin_delta_support" \
   -collection:components="$ODIN_LIBS/hw_odin_ui_components" \
   -collection:hw_clay="$ODIN_LIBS/hw_clay" \
