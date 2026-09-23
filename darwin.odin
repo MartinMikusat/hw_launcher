@@ -154,7 +154,6 @@ msg_void_rect_bool :: proc(receiver: Id, selector: Sel, value: Rect, display: bo
 nsstring :: proc(value: string) -> Id {
 	if len(value) == 0 {return msg_id0(objc_getClass("NSString"), sel_registerName("string"))}
 	c_value := strings.clone_to_cstring(value, context.temp_allocator)
-	defer free_all(context.temp_allocator)
 	send := transmute(proc "c" (Id, Sel, cstring) -> Id)objc_send_address
 	return send(objc_getClass("NSString"), sel_registerName("stringWithUTF8String:"), c_value)
 }
