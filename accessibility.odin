@@ -10,7 +10,11 @@ ACCESSIBILITY_TRANSCRIPT_MAX_BYTES :: 64 << 10
 accessibility_class: Id
 
 accessibility_init :: proc() -> bool {
-	class := objc_allocateClassPair(objc_getClass("NSObject"), "LauncherAccessibilityElement", 0)
+	class := objc_allocateClassPair(
+		objc_getClass("NSAccessibilityElement"),
+		"LauncherAccessibilityElement",
+		0,
+	)
 	if class == nil {return false}
 	if !panel_add_method(class, "accessibilityIsElement", rawptr(accessibility_is_element), "B@:") ||
 	   !panel_add_method(class, "accessibilitySetValue:", rawptr(accessibility_set_value), "v@:@") ||
@@ -99,8 +103,7 @@ accessibility_add_element :: proc(
 	value: string,
 	rect: hw_clay.Bounding_Box,
 ) {
-	element := msg_id0(accessibility_class, sel_registerName("alloc"))
-	element = msg_id0(element, sel_registerName("init"))
+	element := msg_id0(accessibility_class, sel_registerName("new"))
 	msg_void_id(element, sel_registerName("setAccessibilityParent:"), panel_window.view)
 	msg_void_id(element, sel_registerName("setAccessibilityRole:"), nsstring(role))
 	msg_void_id(element, sel_registerName("setAccessibilityLabel:"), nsstring(label))

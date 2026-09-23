@@ -26,6 +26,7 @@ foreign objc_runtime {
 	objc_registerClassPair :: proc "c" (cls: Id) ---
 	class_addMethod        :: proc "c" (cls: Id, name: Sel, imp: rawptr, types: cstring) -> bool ---
 	class_addProtocol      :: proc "c" (cls: Id, protocol: Id) -> bool ---
+	class_getSuperclass    :: proc "c" (cls: Id) -> Id ---
 	sel_registerName       :: proc "c" (name: cstring) -> Sel ---
 }
 
@@ -83,6 +84,11 @@ msg_id_rect_u_u_i :: proc(
 ) -> Id {
 	send := transmute(proc "c" (Id, Sel, Rect, uint, uint, int) -> Id)objc_send_address
 	return send(receiver, selector, value, first, second, third)
+}
+
+msg_bool_id :: proc(receiver: Id, selector: Sel, argument: Id) -> bool {
+	send := transmute(proc "c" (Id, Sel, Id) -> bool)objc_send_address
+	return send(receiver, selector, argument)
 }
 
 msg_bool_id_id :: proc(receiver: Id, selector: Sel, first, second: Id) -> bool {
