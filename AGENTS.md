@@ -24,6 +24,7 @@ development.
 - `hotkey.odin` — Carbon `Option+\`` global hotkey
 - `view.odin` — Delta Support terminal primitives, Clay layout, draw dispatch
 - `input.odin` — shared UTF-8 editor state, selection, clipboard, and IME
+- `accessibility.odin` — native status, transcript, input, and Abort exposure
 - `state.odin` — authoritative bounded transcript and launcher state
 - `backend_protocol.odin` — JSONL command/event contract and event application
 - `backend.odin` — one child process, bounded reader, diagnostics, and shutdown

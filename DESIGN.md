@@ -72,6 +72,6 @@ entrance, exit, hover, or decorative animations.
 Keyboard operation is mandatory. Focus and hover use full inversion, semantic
 states always include text, and the input retains a real editable value rather
 than treating its placeholder as content. Native text-input methods own
-selection, clipboard, and IME geometry. Any future native accessibility bridge
-must describe the status, transcript, and input without introducing a native
-content view hierarchy.
+selection, clipboard, and IME geometry. A native accessibility bridge exposes
+status, transcript, input, and Abort without introducing a native content view
+hierarchy.

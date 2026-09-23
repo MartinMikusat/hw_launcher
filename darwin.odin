@@ -135,6 +135,11 @@ msg_rect_rect_id :: proc(receiver: Id, selector: Sel, value: Rect, view: Id) -> 
 	return send(receiver, selector, value, view)
 }
 
+msg_void_rect :: proc(receiver: Id, selector: Sel, value: Rect) {
+	send := transmute(proc "c" (Id, Sel, Rect))objc_send_address
+	send(receiver, selector, value)
+}
+
 msg_void_rect_bool :: proc(receiver: Id, selector: Sel, value: Rect, display: bool) {
 	send := transmute(proc "c" (Id, Sel, Rect, bool))objc_send_address
 	send(receiver, selector, value, display)

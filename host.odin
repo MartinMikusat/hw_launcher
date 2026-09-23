@@ -106,6 +106,7 @@ panel_init :: proc() -> bool {
 	queue := device->newCommandQueue()
 	if queue == nil {return false}
 
+	if !accessibility_init() {return false}
 	controller := panel_make_controller()
 	delegate := panel_make_delegate()
 	view_class := panel_make_view_class()
@@ -297,6 +298,7 @@ panel_draw :: proc() {
 	coretext.begin_frame(&launcher_view.text, scale, metal.atlas_io(&launcher_view.gpu))
 	draw.list_reset(&launcher_view.list)
 	commands := view_begin_frame(LAUNCHER_WIDTH, LAUNCHER_HEIGHT)
+	accessibility_rebuild()
 	view_render_commands(commands)
 	coretext.flush(&launcher_view.text)
 
