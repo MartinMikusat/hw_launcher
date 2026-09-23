@@ -1,43 +1,51 @@
 # hw_launcher
 
 Native macOS launcher with a Spotlight-style floating panel on a global hotkey.
-The implementation is Odin.
-
-## Architecture
-
-The launcher owns the window, hotkey, transcript, input, and child-process
-lifecycle. The agent loop stays in the separate `../hw_agent` repository and is
-used as one long-lived child process over newline-delimited JSON on stdin/stdout.
-There is no TCP server or port.
-
-```text
-global hotkey -> Odin launcher UI -> hw_agent -rpc -> provider + local tools
-```
-
-The backend owns provider streaming, tool execution, cancellation, JSONL
-sessions, and context compaction. The launcher translates RPC events into UI
-state and sends prompt, steer, follow-up, and abort commands.
-
-Use `hw_odin_ui_framework` for rendering and native AppKit only for the window,
-status item, global hotkey, and event delivery.
-
-## Current state
-
-The pre-rewrite application was removed from `main`; its final source is commit
-`a7ac0b2` and its last release is `0.1.2`. The repository is intentionally
-between implementations until the first buildable Odin application skeleton is
-committed. Do not restore the deleted implementation or add a compatibility
-layer for it.
+The UI and agent client are Odin; the agent runtime remains the separate
+`../hw_agent` executable.
 
 ## Commands
 
-All Odin compiler commands must run through `hw-odin`. Add permanent launcher
-commands when the application skeleton lands.
+- `./build.sh [debug|release]` — build `build/hw_launcher`
+- `./test.sh` — run all Odin tests
+- `./build/hw_launcher --offscreen build/frames/launcher.ppm --theme=light|dark` —
+  render the panel without opening a window
+- `OPENROUTER_API_KEY=... ../hw_agent/build/hw_agent -rpc` — direct backend
+  protocol smoke; the launcher inherits the same environment
+
+`HW_AGENT_BIN` overrides the sibling `../hw_agent/build/hw_agent` path during
+development.
+
+## Architecture
+
+- `main.odin` — windowed and offscreen entry points
+- `host.odin` — AppKit status item, square nonactivating panel, Metal layer,
+  display-link clock, pointer and wheel delivery
+- `hotkey.odin` — Carbon `Option+\`` global hotkey
+- `view.odin` — Delta Support terminal primitives, Clay layout, draw dispatch
+- `input.odin` — shared UTF-8 editor state, selection, clipboard, and IME
+- `state.odin` — authoritative bounded transcript and launcher state
+- `backend_protocol.odin` — JSONL command/event contract and event application
+- `backend.odin` — one child process, bounded reader, diagnostics, and shutdown
+- `offscreen.odin` — noninteractive Metal/PPM inspection surface
+
+The backend child starts on the first prompt, remains available while hidden or
+busy, and terminates when the launcher exits. The panel never opens a listening
+socket. There is one authoritative transcript; the backend never mutates UI
+state directly.
+
+## Style
+
+`DESIGN.md` is the visual authority. The implementation deliberately consumes
+`delta_support:ui` for the embedded Iosevka face, 13 logical-pixel text, 1.2
+line height, themes, terminal input, and semantic colors. Do not introduce
+proportional text, rounded panels, shadows, chat bubbles, cards, sidebars, or
+local copies of those primitives.
 
 ## Verification
 
-- Build the Odin application through `hw-odin`.
-- Test JSONL parsing and process lifecycle without driving the UI.
-- Verify one backend child, ordered events, prompt completion, abort, and clean
-  child shutdown.
-- Keep manual UI interaction with the operator.
+- `hw-odin test` and both debug/release builds are correctness gates.
+- Keep tests headless. Never launch or drive the app through synthetic UI input.
+- Render light and dark offscreen frames after UI changes and inspect the PNGs.
+- Manual status-item, hotkey, IME, clipboard, live backend, and window-resign
+  checks belong to the operator.
