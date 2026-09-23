@@ -1,99 +1,43 @@
-# hw_opencode_launcher (OpenPad)
+# hw_launcher
 
-A native macOS launcher — Spotlight-style floating panel on a global hotkey —
-that acts as an agentic chat harness for [opencode](https://opencode.ai)
-(the CLI coding agent). Scope: small-to-medium tasks — quick edits, questions,
-personal flows (e.g. "download this YouTube video to iCloud") — not large
-project work. Heavy sessions hand off to `opencode attach` in Ghostty.
-
-**History:** started as a Raycast extension; pivoted to a standalone Swift app
-(no Raycast dependency). The backend story is identical either way.
-
-## Commands
-
-- `swift build` — debug build
-- `scripts/build-app.sh` — release build → `build/OpenPad.app` (Developer ID
-  signed, embeds Sparkle.framework + rpath fix)
-- `scripts/release.sh <ver>` — bump plist → build → zip → EdDSA-sign →
-  appcast → GitHub Release → push. Sparkle updates fetch
-  `appcast.xml` via raw.githubusercontent on the public repo
-  `MartinMikusat/hw_opencode_launcher`; EdDSA private key is in the Keychain.
-- `open build/OpenPad.app` — run
-
-## Development loop
-
-- Always run the dev build, never the installed one: `pkill -x OpenPad` first,
-  then `build/OpenPad.app/Contents/MacOS/OpenPad`. Only one instance may run
-  at a time — every copy grabs the global hotkey and status item.
-- Verify changes on the dev build, commit, then ASK before running
-  `scripts/release.sh` — do not release per fix; the appcast feed has a
-  several-minute propagation delay anyway.
+Native macOS launcher with a Spotlight-style floating panel on a global hotkey.
+The implementation is Odin.
 
 ## Architecture
 
-SwiftPM executable + bundle script (no .xcodeproj in git). LSUIElement agent:
-menu bar icon only, no Dock. Global hotkey via KeyboardShortcuts (default ⌥`,
-rebindable in menu → Keyboard Shortcut…).
+The launcher owns the window, hotkey, transcript, input, and child-process
+lifecycle. The agent loop stays in the separate `../hw_agent` repository and is
+used as one long-lived child process over newline-delimited JSON on stdin/stdout.
+There is no TCP server or port.
 
-```
-⌥` hotkey ─▶ PanelController (borderless floating NSPanel)
-                │  first show → ChatModel.start()
-                ▼
-     ChatView (SwiftUI) — text-only transcript, message input
-                │
-                ▼
-     OpencodeClient — URLSession REST + SSE /event stream
-                │
-                ▼
-     ServerManager.ensureServer(~) ─▶ `opencode serve` on port
-     4100+hash(dir) (detached — survives app quit, sessions persist)
+```text
+global hotkey -> Odin launcher UI -> hw_agent -rpc -> provider + local tools
 ```
 
-Working directory is fixed to `~` — no directory picker; the agent
-relocates itself per task (cd/read whatever rules it needs).
+The backend owns provider streaming, tool execution, cancellation, JSONL
+sessions, and context compaction. The launcher translates RPC events into UI
+state and sends prompt, steer, follow-up, and abort commands.
 
-- `Sources/OpenPad/OpencodeClient.swift` — REST + SSE. `Part`/`ServerEvent`
-  are hand-decoded Codable unions keyed on `type`. Events nest under
-  `properties`.
-- `Sources/OpenPad/ChatModel.swift` — @MainActor state machine: start →
-  connect to home-dir server; send → lazy session create → `promptAsync` →
-  SSE updates. Optimistic user bubbles are matched against the server's
-  message echo (`pendingLocalIDs`/`hiddenMessageIDs`). Permission requests →
-  NSAlert (once/always/reject). Busy→idle while panel hidden →
-  `onIdleWhileHidden` → UNUserNotificationCenter.
-- `Sources/OpenPad/ChatView.swift` — header (dir, model picker), transcript
-  (text + live tool rows), input bar. Esc = abort while busy, hide when idle.
-- `Sources/OpenPad/ServerManager.swift` — port probe via `GET /path` (doubles
-  as health check; no `/health` in this API version), detached `Process`
-  spawn, binary resolution (`~/.opencode/bin`, homebrew, login-shell PATH).
-- `Sources/OpenPad/OpenPadApp.swift` — AppDelegate: status item, hotkey,
-  settings window (shortcut recorder), notification delegate, URL scheme.
+Use `hw_odin_ui_framework` for rendering and native AppKit only for the window,
+status item, global hotkey, and event delivery.
 
-## Feasibility findings (verified against this machine, opencode 1.18.30)
+## Current state
 
-- opencode is client/server by design: the TUI is just a client of its own
-  server. The full agent loop — tools, MCPs, plugins, permissions — runs
-  server-side; this app is a dumb client exactly like the TUI.
-- Verified live: server spawn → session → `promptAsync` → SSE stream
-  (`message.part.delta/updated`, `session.idle`) → real `bash` tool call
-  completing. MCPs connect automatically (playwright/basic-memory/user-fff
-  verified `connected` via `client.mcp.status()`; apple-notes fails —
-  pre-existing npx issue unrelated to this app).
-- **Permissions:** global config `"permission": "allow"` → nothing prompts.
-  If tightened, `permission.updated` events → NSAlert →
-  `POST /session/:id/permissions/:pid` (`once`/`always`/`reject`).
-- Detached servers persist: fire a long task, quit the app, it finishes anyway.
-- Slash commands executable via `POST /session/:id/command` (not wired).
-- opencode SDK note: no `/global/health` in SDK 1.18.30 — `GET /path` is the
-  probe. Swift client hand-rolls the API (small surface, ~10 endpoints).
+The pre-rewrite application was removed from `main`; its final source is commit
+`a7ac0b2` and its last release is `0.1.2`. The repository is intentionally
+between implementations until the first buildable Odin application skeleton is
+committed. Do not restore the deleted implementation or add a compatibility
+layer for it.
 
-## Roadmap / gaps
+## Commands
 
-- Sessions view for resuming past sessions (a persisted server registry was
-  removed with the directory picker — re-add alongside this UI; notification
-  deep links currently just show the panel).
-- `session.command` for slash commands; `@agent` inline syntax.
-- Ghostty handoff is wired (`⌘O`) but the `-e` invocation path needs a live
-  test on a real desktop session.
-- App icon, onboarding (permission grant for notifications), login-item
-  launch toggle.
+All Odin compiler commands must run through `hw-odin`. Add permanent launcher
+commands when the application skeleton lands.
+
+## Verification
+
+- Build the Odin application through `hw-odin`.
+- Test JSONL parsing and process lifecycle without driving the UI.
+- Verify one backend child, ordered events, prompt completion, abort, and clean
+  child shutdown.
+- Keep manual UI interaction with the operator.
