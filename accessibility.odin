@@ -18,7 +18,7 @@ accessibility_init :: proc() -> bool {
 	if class == nil {return false}
 	if !panel_add_method(class, "accessibilityIsElement", rawptr(accessibility_is_element), "B@:") ||
 	   !panel_add_method(class, "accessibilitySetValue:", rawptr(accessibility_set_value), "v@:@") ||
-	   !panel_add_method(class, "accessibilityPerformPress:", rawptr(accessibility_press), "B@:@") {
+	   !panel_add_method(class, "accessibilityPerformPress", rawptr(accessibility_press), "B@:") {
 		return false
 	}
 	objc_registerClassPair(class)
@@ -42,7 +42,7 @@ accessibility_set_value :: proc "c" (self: Id, command: Sel, value: Id) {
 	panel_mark_dirty()
 }
 
-accessibility_press :: proc "c" (self: Id, command: Sel, sender: Id) -> bool {
+accessibility_press :: proc "c" (self: Id, command: Sel) -> bool {
 	context = runtime.default_context()
 	role := nsstring_to_string(msg_id0(self, sel_registerName("accessibilityRole")))
 	if role != "AXButton" {return false}

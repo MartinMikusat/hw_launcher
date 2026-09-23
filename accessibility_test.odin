@@ -19,6 +19,7 @@ accessibility_element_inherits_appkit_base :: proc(t: ^testing.T) {
 		"setAccessibilityLabel:",
 		"setAccessibilityValue:",
 		"setAccessibilityFrame:",
+		"accessibilityPerformPress",
 	}) {
 		cselector := strings.clone_to_cstring(selector)
 		supported := msg_bool_id(
