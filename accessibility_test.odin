@@ -17,7 +17,7 @@ accessibility_element_inherits_appkit_base :: proc(t: ^testing.T) {
 		"setAccessibilityParent:",
 		"setAccessibilityRole:",
 		"setAccessibilityLabel:",
-		"setAccessibilityValue:",
+		"accessibilityValue",
 		"setAccessibilityFrame:",
 		"accessibilityPerformPress",
 	}) {

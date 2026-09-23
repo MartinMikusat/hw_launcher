@@ -2,7 +2,6 @@ package launcher
 
 import "base:runtime"
 import "core:strings"
-import text_input "components:text_input"
 import hw_clay "hw_clay:."
 
 ACCESSIBILITY_TRANSCRIPT_MAX_BYTES :: 64 << 10
@@ -17,7 +16,7 @@ accessibility_init :: proc() -> bool {
 	)
 	if class == nil {return false}
 	if !panel_add_method(class, "accessibilityIsElement", rawptr(accessibility_is_element), "B@:") ||
-	   !panel_add_method(class, "accessibilitySetValue:", rawptr(accessibility_set_value), "v@:@") ||
+	   !panel_add_method(class, "accessibilityValue", rawptr(accessibility_value), "@@:") ||
 	   !panel_add_method(class, "accessibilityPerformPress", rawptr(accessibility_press), "B@:") {
 		return false
 	}
@@ -30,16 +29,9 @@ accessibility_is_element :: proc "c" (self: Id, command: Sel) -> bool {
 	return true
 }
 
-accessibility_set_value :: proc "c" (self: Id, command: Sel, value: Id) {
+accessibility_value :: proc "c" (self: Id, command: Sel) -> Id {
 	context = runtime.default_context()
-	role := nsstring_to_string(msg_id0(self, sel_registerName("accessibilityRole")))
-	if role != "AXTextField" {return}
-	text := nsstring_to_string(value)
-	delete(launcher.input)
-	launcher.input = strings.clone(text)
-	text_input.set_selection(&launcher.input_state, launcher.input, 0, len(launcher.input))
-	input_reset_caret()
-	panel_mark_dirty()
+	return nsstring(launcher.input)
 }
 
 accessibility_press :: proc "c" (self: Id, command: Sel) -> bool {
@@ -107,7 +99,7 @@ accessibility_add_element :: proc(
 	msg_void_id(element, sel_registerName("setAccessibilityParent:"), panel_window.view)
 	msg_void_id(element, sel_registerName("setAccessibilityRole:"), nsstring(role))
 	msg_void_id(element, sel_registerName("setAccessibilityLabel:"), nsstring(label))
-	if len(value) > 0 {
+	if role != "AXTextField" && len(value) > 0 {
 		msg_void_id(element, sel_registerName("setAccessibilityValue:"), nsstring(value))
 	}
 	local := Rect{{f64(rect.x), f64(rect.y)}, {f64(rect.width), f64(rect.height)}}
