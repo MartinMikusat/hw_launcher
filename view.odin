@@ -86,9 +86,8 @@ view_init :: proc(device: rawptr) -> bool {
 		if !metal.renderer_init(
 			&launcher_view.gpu,
 			device,
-			"",
-			uint(MTL.PixelFormat.BGRA8Unorm),
-			true,
+			pixel_format = uint(MTL.PixelFormat.BGRA8Unorm),
+			metallib_data = UI_METALLIB,
 		) {
 			delete(launcher_view.memory)
 			draw.list_destroy(&launcher_view.list)

@@ -4,6 +4,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ODIN_LIBS=$(CDPATH= cd -- "$ROOT/../odin_libraries" && pwd)
+sh "$ODIN_LIBS/hw_odin_ui_framework/scripts/build-metallib.sh" "$ROOT/build/ui.metallib"
 
 # shellcheck disable=SC2086
 hw-odin test "$ROOT" \
