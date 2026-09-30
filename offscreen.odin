@@ -13,14 +13,14 @@ import draw "ui_framework:draw"
 import metal "ui_framework:metal"
 
 get_bytes :: proc(receiver: Id, bytes: []u8, bytes_per_row: uint, width, height: uint) {
-	send := transmute(proc "c" (
+	send := cast(proc "c" (
 		_: Id,
 		_: rawptr,
 		_: rawptr,
 		_: uint,
 		_: MTL.Region,
 		_: uint,
-	))metal.send_address
+	))metal.objc_msgSend
 	region := MTL.Region{size = MTL.Size{NS.Integer(width), NS.Integer(height), 1}}
 	send(receiver, sel_registerName("getBytes:bytesPerRow:fromRegion:mipmapLevel:"), raw_data(bytes), bytes_per_row, region, 0)
 }
