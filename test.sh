@@ -10,7 +10,7 @@ sh "$ODIN_LIBS/hw_odin_ui_framework/scripts/build-metallib.sh" "$ROOT/build/ui.m
 hw-odin test "$ROOT" \
   -define:ODIN_TEST_THREADS=1 \
   -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true \
-  -collection:delta_support="$ROOT/delta_support" \
+ \
   -collection:components="$ODIN_LIBS/hw_odin_ui_components" \
   -collection:hw_clay="$ODIN_LIBS/hw_clay" \
   -collection:ui_framework="$ODIN_LIBS/hw_odin_ui_framework" \

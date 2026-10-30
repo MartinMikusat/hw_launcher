@@ -5,7 +5,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
-import delta_settings "delta_support:settings"
+import delta_settings "settings"
 
 run_offscreen :: proc() -> bool {
 	if len(os.args) < 3 || os.args[1] != "--offscreen" {return false}

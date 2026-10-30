@@ -38,7 +38,7 @@ state directly.
 ## Style
 
 `DESIGN.md` is the visual authority. The implementation deliberately consumes
-`delta_support:ui` for the embedded Iosevka face, 13 logical-pixel text, 1.2
+the `ui` package for the embedded Iosevka face, 13 logical-pixel text, 1.2
 line height, themes, terminal input, and semantic colors. Do not introduce
 proportional text, rounded panels, shadows, chat bubbles, cards, sidebars, or
 local copies of those primitives.

@@ -21,7 +21,7 @@ esac
 
 # shellcheck disable=SC2086
 hw-odin build "$ROOT" $FLAGS \
-  -collection:delta_support="$ROOT/delta_support" \
+ \
   -collection:components="$ODIN_LIBS/hw_odin_ui_components" \
   -collection:hw_clay="$ODIN_LIBS/hw_clay" \
   -collection:ui_framework="$ODIN_LIBS/hw_odin_ui_framework" \

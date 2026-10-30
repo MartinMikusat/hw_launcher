@@ -3,7 +3,7 @@ package launcher
 import "base:runtime"
 import NS "core:sys/darwin/Foundation"
 import hw_clay "hw_clay:."
-import delta_ui "delta_support:ui"
+import delta_ui "ui"
 import text_input "components:text_input"
 import coretext "ui_framework:coretext"
 

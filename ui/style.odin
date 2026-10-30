@@ -3,7 +3,7 @@ package delta_ui
 
 import "core:math"
 import text_input "components:text_input"
-import settings "delta_support:settings"
+import settings "../settings"
 import hw_clay "hw_clay:."
 import hw_clay_ui "ui_framework:clay"
 import ui "ui_framework:core"
