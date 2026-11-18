@@ -1,8 +1,7 @@
 # hw_launcher
 
 Native macOS launcher with a Spotlight-style floating panel on a global hotkey.
-The UI and agent client are Odin; the agent runtime remains the separate
-`../hw_agent` executable.
+The Odin launcher uses a separate executable for its agent protocol. Use the offscreen entry point for UI verification.
 
 ## Commands
 
@@ -10,11 +9,8 @@ The UI and agent client are Odin; the agent runtime remains the separate
 - `./test.sh` — run all Odin tests
 - `./build/hw_launcher --offscreen build/frames/launcher.ppm --theme=light|dark` —
   render the panel without opening a window
-- `OPENROUTER_API_KEY=... ../hw_agent/build/hw_agent -rpc` — direct backend
-  protocol smoke; the launcher inherits the same environment
 
-`HW_AGENT_BIN` overrides the sibling `../hw_agent/build/hw_agent` path during
-development.
+For backend development, set `HW_AGENT_BIN` to the path of a compatible JSONL executable.
 
 ## Architecture
 
